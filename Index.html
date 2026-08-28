@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VeSole POS — Sign in</title>
+<link rel="stylesheet" href="assets/css/styles.css">
+<style>
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, var(--ink) 0%, #164A42 55%, var(--ink) 100%);
+  }
+  .auth-wrap { width: 100%; max-width: 400px; padding: 20px; }
+  .auth-card { padding: 32px 28px; }
+  .logo-mark {
+    width: 42px; height: 42px;
+    border-radius: 10px;
+    background: var(--primary);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-weight: 700; font-size: 18px;
+    margin-bottom: 16px;
+  }
+  .auth-tabs { display: flex; gap: 4px; background: var(--canvas); border-radius: var(--radius); padding: 4px; margin-bottom: 24px; }
+  .auth-tab {
+    flex: 1; text-align: center; padding: 9px; border-radius: 7px;
+    font-size: 13px; font-weight: 600; color: var(--ink-soft);
+    background: none; border: none;
+  }
+  .auth-tab.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+  .error-msg {
+    background: var(--danger-tint); color: var(--danger);
+    padding: 10px 13px; border-radius: var(--radius);
+    font-size: 13px; margin-bottom: 16px; display: none;
+  }
+  .hint { font-size: 12px; color: var(--ink-soft); margin-top: -10px; margin-bottom: 16px; }
+  form.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <div class="logo-mark">VS</div>
+    <h1>VeSole POS</h1>
+    <p class="hint" style="margin-top:4px;">Sign in to your business account</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" onclick="switchTab('login')">Sign in</button>
+      <button class="auth-tab" id="tabSignup" onclick="switchTab('signup')">Create business</button>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <!-- LOGIN -->
+    <form id="loginForm" onsubmit="handleLogin(event)">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="loginEmail" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="loginPassword" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block" id="loginBtn">Sign in</button>
+    </form>
+
+    <!-- SIGNUP / FIRST-TIME BUSINESS SETUP -->
+    <form id="signupForm" class="hidden" onsubmit="handleSignup(event)">
+      <div class="field">
+        <label>Business name</label>
+        <input type="text" id="bizName" required placeholder="e.g. Rongai General Store">
+      </div>
+      <div class="field">
+        <label>Your full name (admin account)</label>
+        <input type="text" id="adminName" required>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="signupEmail" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="signupPassword" required minlength="6" autocomplete="new-password">
+      </div>
+      <p class="hint">This creates your business profile and your admin account together — you'll be the first user, and can add staff accounts later from Settings.</p>
+      <button type="submit" class="btn btn-primary btn-block" id="signupBtn">Create business & sign in</button>
+    </form>
+  </div>
+</div>
+
+<script src="assets/js/supabase-client.js"></script>
+<script>
+function switchTab(tab) {
+  document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+  document.getElementById('tabSignup').classList.toggle('active', tab === 'signup');
+  document.getElementById('loginForm').classList.toggle('hidden', tab !== 'login');
+  document.getElementById('signupForm').classList.toggle('hidden', tab !== 'signup');
+  document.getElementById('errorMsg').style.display = 'none';
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  onSupabaseReady(async () => {
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+    const { error } = await window.supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      showError(error.message);
+      btn.disabled = false; btn.textContent = 'Sign in';
+      return;
+    }
+    window.location.href = 'dashboard.html';
+  });
+}
+
+async function handleSignup(e) {
+  e.preventDefault();
+  const btn = document.getElementById('signupBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+
+  onSupabaseReady(async () => {
+    const bizName = document.getElementById('bizName').value;
+    const adminName = document.getElementById('adminName').value;
+    const email = document.getElementById('signupEmail').value;
+    const password = document.getElementById('signupPassword').value;
+
+    // 1. Create the auth user
+    const { data: signUpData, error: signUpError } = await window.supabase.auth.signUp({ email, password });
+    if (signUpError) {
+      showError(signUpError.message);
+      btn.disabled = false; btn.textContent = 'Create business & sign in';
+      return;
+    }
+    const userId = signUpData.user?.id;
+    if (!userId) {
+      showError('Account created — check your email to confirm, then sign in.');
+      btn.disabled = false; btn.textContent = 'Create business & sign in';
+      return;
+    }
+
+    // 2. Create the business
+    const { data: biz, error: bizError } = await window.supabase
+      .from('businesses')
+      .insert({ name: bizName })
+      .select()
+      .single();
+    if (bizError) {
+      showError('Business creation failed: ' + bizError.message);
+      btn.disabled = false; btn.textContent = 'Create business & sign in';
+      return;
+    }
+
+    // 3. Link the user as admin of that business
+    const { error: profileError } = await window.supabase
+      .from('user_profiles')
+      .insert({ id: userId, business_id: biz.id, full_name: adminName, role: 'admin' });
+    if (profileError) {
+      showError('Profile setup failed: ' + profileError.message);
+      btn.disabled = false; btn.textContent = 'Create business & sign in';
+      return;
+    }
+
+    window.location.href = 'dashboard.html';
+  });
+}
+
+// If already logged in, skip straight to the dashboard.
+onSupabaseReady(async () => {
+  const { data: { session } } = await window.supabase.auth.getSession();
+  if (session) window.location.href = 'dashboard.html';
+});
+</script>
+</body>
+</html>
+
