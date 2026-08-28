@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — VeSole POS</title>
+<link rel="stylesheet" href="assets/css/styles.css">
+<style>
+  .top-products li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  .top-products li:last-child { border-bottom: none; }
+  .rank {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px;
+    background: var(--primary-tint); color: var(--primary);
+    font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    margin-right: 10px;
+  }
+  canvas { max-height: 220px; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <nav class="sidebar">
+    <div class="brand">
+      VeSole POS
+      <span class="biz-name" id="sidebarBizName">Loading…</span>
+    </div>
+    <a class="nav-item active" href="dashboard.html">Dashboard</a>
+    <a class="nav-item" href="pos.html">Checkout</a>
+    <a class="nav-item" href="inventory.html">Inventory</a>
+    <a class="nav-item" href="sales.html">Sales</a>
+    <a class="nav-item" href="customers.html">Customers</a>
+    <a class="nav-item" href="suppliers.html">Suppliers</a>
+    <a class="nav-item" href="expenses.html">Expenses</a>
+    <a class="nav-item" href="reports.html">Reports</a>
+    <a class="nav-item" href="settings.html">Settings</a>
+    <div class="sidebar-footer">
+      <span id="sidebarUserName">—</span><br>
+      <a href="#" onclick="handleLogout(event)" style="color:#9FBBB4;">Sign out</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Dashboard</h1>
+        <p class="hint" style="color:var(--ink-soft); margin:2px 0 0;">Today's overview</p>
+      </div>
+      <a href="pos.html" class="btn btn-primary">+ New sale</a>
+    </div>
+
+    <div class="grid grid-4" style="margin-bottom:20px;">
+      <div class="card stat-card">
+        <div class="label">Today's sales</div>
+        <div class="value money" id="statTodaySales">—</div>
+      </div>
+      <div class="card stat-card">
+        <div class="label">Transactions</div>
+        <div class="value num" id="statTxnCount">—</div>
+      </div>
+      <div class="card stat-card">
+        <div class="label">Products sold</div>
+        <div class="value num" id="statProductsSold">—</div>
+      </div>
+      <div class="card stat-card">
+        <div class="label">Est. profit today</div>
+        <div class="value money" id="statProfit">—</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-bottom:20px; align-items:start;">
+      <div class="card" style="padding:18px 20px;">
+        <h3 style="margin-bottom:14px;">Sales — last 7 days</h3>
+        <canvas id="salesChart"></canvas>
+      </div>
+      <div class="card" style="padding:18px 20px;">
+        <h3 style="margin-bottom:6px;">Top-selling products</h3>
+        <ul class="top-products" id="topProductsList">
+          <li class="empty-state" style="padding:20px 0;">Loading…</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="align-items:start;">
+      <div class="card" style="padding:18px 20px;">
+        <h3 style="margin-bottom:14px;">Recent transactions</h3>
+        <table>
+          <thead><tr><th>Receipt</th><th>Cashier</th><th>Items</th><th>Total</th></tr></thead>
+          <tbody id="recentTxnBody">
+            <tr><td colspan="4" class="empty-state">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card" style="padding:18px 20px;">
+        <h3 style="margin-bottom:14px;">Low stock</h3>
+        <table>
+          <thead><tr><th>Product</th><th>Stock</th><th>Min</th></tr></thead>
+          <tbody id="lowStockBody">
+            <tr><td colspan="3" class="empty-state">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/js/supabase-client.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+let profile = null;
+
+async function handleLogout(e) {
+  e.preventDefault();
+  await window.supabase.auth.signOut();
+  window.location.href = 'index.html';
+}
+
+function startOfToday() {
+  const d = new Date(); d.setHours(0,0,0,0); return d.toISOString();
+}
+function daysAgo(n) {
+  const d = new Date(); d.setDate(d.getDate() - n); d.setHours(0,0,0,0); return d;
+}
+
+async function loadDashboard() {
+  await requireAuth();
+  profile = await getCurrentProfile();
+  if (!profile) { window.location.href = 'index.html'; return; }
+
+  const symbol = profile.businesses?.currency_symbol || 'KSh';
+  document.getElementById('sidebarBizName').textContent = profile.businesses?.name || '';
+  document.getElementById('sidebarUserName').textContent = profile.full_name;
+
+  const businessId = profile.business_id;
+  const supa = window.supabase;
+
+  // ---- Today's sales + transaction count ----
+  const { data: todaySales } = await supa
+    .from('sales')
+    .select('id, total')
+    .eq('business_id', businessId)
+    .gte('created_at', startOfToday())
+    .eq('status', 'completed');
+
+  const todayTotal = (todaySales || []).reduce((sum, s) => sum + Number(s.total), 0);
+  document.getElementById('statTodaySales').textContent = formatMoney(todayTotal, symbol);
+  document.getElementById('statTxnCount').textContent = (todaySales || []).length;
+
+  // ---- Products sold today + estimated profit ----
+  const todaySaleIds = (todaySales || []).map(s => s.id);
+  let productsSoldCount = 0;
+  let estProfit = 0;
+
+  if (todaySaleIds.length) {
+    const { data: items } = await supa
+      .from('sale_items')
+      .select('quantity, line_total, product_id')
+      .in('sale_id', todaySaleIds);
+
+    productsSoldCount = (items || []).reduce((sum, i) => sum + Number(i.quantity), 0);
+
+    // Estimated profit = revenue - cost of goods (using product buying_price)
+    const productIds = [...new Set((items || []).map(i => i.product_id).filter(Boolean))];
+    let costMap = {};
+    if (productIds.length) {
+      const { data: products } = await supa.from('products').select('id, buying_price').in('id', productIds);
+      (products || []).forEach(p => { costMap[p.id] = Number(p.buying_price); });
+    }
+    const cogs = (items || []).reduce((sum, i) => sum + (costMap[i.product_id] || 0) * Number(i.quantity), 0);
+
+    const { data: todayExpenses } = await supa
+      .from('expenses')
+      .select('amount')
+      .eq('business_id', businessId)
+      .eq('expense_date', new Date().toISOString().slice(0,10));
+    const expenseTotal = (todayExpenses || []).reduce((sum, e) => sum + Number(e.amount), 0);
+
+    estProfit = todayTotal - cogs - expenseTotal;
+  }
+  document.getElementById('statProductsSold').textContent = productsSoldCount;
+  const profitEl = document.getElementById('statProfit');
+  profitEl.textContent = formatMoney(estProfit, symbol);
+  profitEl.classList.add(estProfit >= 0 ? 'positive' : 'negative');
+
+  // ---- Recent transactions ----
+  const { data: recent } = await supa
+    .from('sales')
+    .select('id, transaction_no, total, user_profiles(full_name), sale_items(quantity)')
+    .eq('business_id', businessId)
+    .order('created_at', { ascending: false })
+    .limit(6);
+
+  const txnBody = document.getElementById('recentTxnBody');
+  if (recent && recent.length) {
+    txnBody.innerHTML = recent.map(s => `
+      <tr>
+        <td class="receipt-no">${s.transaction_no}</td>
+        <td>${s.user_profiles?.full_name || '—'}</td>
+        <td class="num">${(s.sale_items || []).reduce((n,i)=>n+Number(i.quantity),0)}</td>
+        <td class="money">${formatMoney(s.total, symbol)}</td>
+      </tr>
+    `).join('');
+  } else {
+    txnBody.innerHTML = '<tr><td colspan="4" class="empty-state">No sales yet — your first transaction will show up here.</td></tr>';
+  }
+
+  // ---- Low stock ----
+  const { data: lowStock } = await supa
+    .from('products')
+    .select('name, current_stock, min_stock_level')
+    .eq('business_id', businessId)
+    .eq('active', true)
+    .order('current_stock', { ascending: true })
+    .limit(50);
+
+  const lowStockRows = (lowStock || []).filter(p => Number(p.current_stock) <= Number(p.min_stock_level));
+  const lowStockBody = document.getElementById('lowStockBody');
+  if (lowStockRows.length) {
+    lowStockBody.innerHTML = lowStockRows.slice(0, 6).map(p => `
+      <tr>
+        <td>${p.name}</td>
+        <td class="num">${p.current_stock}</td>
+        <td class="num">${p.min_stock_level}</td>
+      </tr>
+    `).join('');
+  } else {
+    lowStockBody.innerHTML = '<tr><td colspan="3" class="empty-state">Nothing low on stock right now.</td></tr>';
+  }
+
+  // ---- Top-selling products (last 30 days) ----
+  const { data: recentSales30 } = await supa
+    .from('sales')
+    .select('id')
+    .eq('business_id', businessId)
+    .gte('created_at', daysAgo(30).toISOString());
+  const saleIds30 = (recentSales30 || []).map(s => s.id);
+
+  const topList = document.getElementById('topProductsList');
+  if (saleIds30.length) {
+    const { data: items30 } = await supa
+      .from('sale_items')
+      .select('product_name, quantity')
+      .in('sale_id', saleIds30);
+
+    const totals = {};
+    (items30 || []).forEach(i => { totals[i.product_name] = (totals[i.product_name] || 0) + Number(i.quantity); });
+    const ranked = Object.entries(totals).sort((a,b) => b[1] - a[1]).slice(0, 6);
+
+    topList.innerHTML = ranked.length
+      ? ranked.map(([name, qty], idx) => `
+          <li><span><span class="rank">${idx+1}</span>${name}</span><span class="num">${qty} sold</span></li>
+        `).join('')
+      : '<li class="empty-state" style="padding:20px 0;">No sales in the last 30 days yet.</li>';
+  } else {
+    topList.innerHTML = '<li class="empty-state" style="padding:20px 0;">No sales in the last 30 days yet.</li>';
+  }
+
+  // ---- 7-day sales chart ----
+  const { data: sales7 } = await supa
+    .from('sales')
+    .select('total, created_at')
+    .eq('business_id', businessId)
+    .gte('created_at', daysAgo(6).toISOString());
+
+  const dayLabels = [];
+  const dayTotals = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = daysAgo(i);
+    const label = d.toLocaleDateString('en-KE', { weekday: 'short' });
+    const dayStart = new Date(d);
+    const dayEnd = new Date(d); dayEnd.setDate(dayEnd.getDate() + 1);
+    const total = (sales7 || [])
+      .filter(s => { const t = new Date(s.created_at); return t >= dayStart && t < dayEnd; })
+      .reduce((sum, s) => sum + Number(s.total), 0);
+    dayLabels.push(label);
+    dayTotals.push(total);
+  }
+
+  new Chart(document.getElementById('salesChart'), {
+    type: 'bar',
+    data: {
+      labels: dayLabels,
+      datasets: [{
+        data: dayTotals,
+        backgroundColor: '#146356',
+        borderRadius: 4,
+        maxBarThickness: 34
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { ticks: { font: { family: 'IBM Plex Mono', size: 11 } }, grid: { color: '#EEF2F1' } },
+        x: { ticks: { font: { family: 'Inter', size: 12 } }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+loadDashboard();
+</script>
+</body>
+</html>
