@@ -1,2 +1,0 @@
-# VeSole-pos
-Business
